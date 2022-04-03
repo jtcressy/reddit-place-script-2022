@@ -99,11 +99,14 @@ class PlaceClient:
         if self.using_tor:
             self.proxies = self.GetProxies(["127.0.0.1:" + str(self.tor_port)])
             if self.use_builtin_tor:
-                subprocess.call(
-                    "start "
-                    + os.path.join(os.getcwd() + "/tor/Tor/tor.exe")
+                subprocess.Popen(
+                    '"'
+                    + os.path.join(os.getcwd(), "./tor/Tor/tor.exe")
+                    + '"'
                     + " --defaults-torrc "
-                    + os.path.join(os.getcwd() + "/Tor/Tor/torrc")
+                    + '"'
+                    + os.path.join(os.getcwd(), "./Tor/Tor/torrc")
+                    + '"'
                     + " --HTTPTunnelPort "
                     + str(self.tor_port),
                     shell=True,
@@ -201,7 +204,6 @@ class PlaceClient:
             logger.exception("Failed to load image")
             exit()
         except UnidentifiedImageError:
-            logger.fatal("File found, but couldn't identify image format")
             logger.exception("File found, but couldn't identify image format")
 
         # Convert all images to RGBA - Transparency should only be supported with PNG
@@ -220,12 +222,15 @@ class PlaceClient:
     def set_pixel_and_check_ratelimit(
         self, access_token_in, x, y, color_index_in=18, canvas_index=0, thread_index=-1
     ):
+        # canvas structure:
+        # 0 | 1
+        # 2 | 3
         logger.info(
             "Thread #{} : Attempting to place {} pixel at {}, {}",
             thread_index,
             ColorMapper.color_id_to_name(color_index_in),
-            x + (1000 * canvas_index),
-            y,
+            x + (1000 * (canvas_index % 2)),
+            y + (1000 * (canvas_index // 2)),
         )
 
         url = "https://gql-realtime-2.reddit.com/query"
@@ -265,9 +270,7 @@ class PlaceClient:
         # If we don't get data, it means we've been rate limited.
         # If we do, a pixel has been successfully placed.
         if response.json()["data"] is None:
-            logger.error(
-                "Thread #{} : error while placing pixel: {}", thread_index, response.json()["errors"][0]
-            )
+            logger.debug(response.json().get("errors"))
             waitTime = math.floor(
                 response.json()["errors"][0]["extensions"]["nextAvailablePixelTs"]
             )
@@ -384,16 +387,20 @@ class PlaceClient:
 
         imgs = []
         logger.debug("A total of {} canvas sockets opened", len(canvas_sockets))
+
         while len(canvas_sockets) > 0:
             temp = json.loads(ws.recv())
             logger.debug("Waiting for WebSocket message")
+
             if temp["type"] == "data":
                 logger.debug("Received WebSocket data type message")
                 msg = temp["payload"]["data"]["subscribe"]
+
                 if msg["data"]["__typename"] == "FullFrameMessageData":
                     logger.debug("Received full frame message")
                     img_id = int(temp["id"])
                     logger.debug("Image ID: {}", img_id)
+
                     if img_id in canvas_sockets:
                         logger.debug("Getting image: {}", msg["data"]["name"])
                         imgs.append(
@@ -425,6 +432,7 @@ class PlaceClient:
             + canvas_details["canvasWidth"]
         )
         logger.debug("New image width: {}", new_img_width)
+
         new_img_height = (
             max(map(lambda x: x["dy"], canvas_details["canvasConfigurations"]))
             + canvas_details["canvasHeight"]
@@ -432,6 +440,7 @@ class PlaceClient:
         logger.debug("New image height: {}", new_img_height)
 
         new_img = Image.new("RGB", (new_img_width, new_img_height))
+
         for idx, img in enumerate(sorted(imgs, key=lambda x: x[0])):
             logger.debug("Adding image (ID {}): {}", img[0], img[1])
             dx_offset = int(canvas_details["canvasConfigurations"][idx]["dx"])
@@ -496,11 +505,11 @@ class PlaceClient:
                     "{}, {}, {}, {}",
                     pix2[x + self.pixel_x_start, y + self.pixel_y_start],
                     new_rgb,
-                    target_rgb[:3] != (69, 42, 0),
+                    target_rgb[:3] != (69, 42, 0) and new_rgb != (69, 42, 0),
                     pix2[x, y] != new_rgb,
                 )
 
-                if target_rgb[:3] != (69, 42, 0):
+                if target_rgb[:3] != (69, 42, 0) and new_rgb != (69, 42, 0):
                     logger.debug(
                         "Thread #{} : Replacing {} pixel at: {},{} with {} color",
                         index,
@@ -598,7 +607,7 @@ class PlaceClient:
                         username = name
                         password = worker["password"]
                     except Exception:
-                        logger.info(
+                        logger.exception(
                             "You need to provide all required fields to worker '{}'",
                             name,
                         )
@@ -639,6 +648,7 @@ class PlaceClient:
                     if r.status_code != HTTPStatus.OK.value:
                         # password is probably invalid
                         logger.exception("Authorization failed!")
+                        logger.debug("response: {} - {}", r.status_code, r.text)
                         return
                     else:
                         logger.success("Authorization successful!")
@@ -710,6 +720,9 @@ class PlaceClient:
                     while pixel_x_start > 999:
                         pixel_x_start -= 1000
                         canvas += 1
+                    while pixel_y_start > 999:
+                        pixel_y_start -= 1000
+                        canvas += 2
 
                     # draw the pixel onto r/place
                     next_pixel_placement_time = self.set_pixel_and_check_ratelimit(
