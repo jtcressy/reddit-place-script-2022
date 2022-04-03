@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: place-bot
+spec:
+  selector:
+    matchLabels:
+      app: place-bot
+  template:
+    metadata:
+      labels:
+        app: place-bot
+    spec:
+      containers:
+      - name: place-bot
+        image: ghcr.io/jtcressy/reddit-place-script-2022:main
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        volumeMounts:
+        - mountPath: /usr/src/app/config.json
+          name: config-json
+          subPath: config.json
+        - mountPath: /usr/src/app/image
+          name: image
+          subPath: image
+      - name: cloudflare-proxy
+        image: cloudflare/cloudflared:2022.3.4
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        command:
+        - tunnel
+        args:
+        - --no-autoupdate
+        - run
+        - --token
+        - $(CF_TOKEN)
+        env:
+        - name: CF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: cloudflared-token
+      volumes:
+      - name: config-json
+        configMap:
+          name: config-json
+      - name: image
+        secret:
+          name: placeimage
+          
+
