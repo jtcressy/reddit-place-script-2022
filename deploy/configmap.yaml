@@ -4,27 +4,4 @@ metadata:
   name: config-json
   namespace: place-bots
 data:
-  "config.json": |
-    {
-      "image_path": "image",
-      "image_start_coords": [248, 1800],
-      "thread_delay": 2,
-      "unverified_place_frequency": true,
-      "compact_logging": true,
-      "using_tor": true,
-      "tor_port": 1881,
-      "tor_control_port": 9051,
-      "tor_password": "Passwort",
-      "tor_delay": 5,
-      "use_builtin_tor": true,
-      "workers": {
-        "worker1username": {
-          "password": "password",
-          "start_coords": [0, 0]
-        },
-        "worker2username": {
-          "password": "password",
-          "start_coords": [0, 0]
-        }
-      }
-    }
+  "config.json": ""

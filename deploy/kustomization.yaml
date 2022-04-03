@@ -6,3 +6,9 @@ resources:
 - deployment.yaml
 - configmap.yaml
 - imagesecret.yaml
+configMapGenerator:
+  - behavior: replace
+    name: config-json
+    namespace: place-bots
+    files:
+      - config.json
