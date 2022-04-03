@@ -22,7 +22,7 @@ jobs:
         with:
           # list of Docker images to use as base name for tags
           images: |
-            ghcr.io/jtcressy/reddit-place-script-2022:
+            ghcr.io/jtcressy/reddit-place-script-2022
           # generate Docker tags based on the following events/attributes
           tags: |
             type=schedule
