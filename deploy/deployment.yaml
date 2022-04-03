@@ -50,6 +50,6 @@ spec:
           name: config-json
       - name: image
         secret:
-          name: placeimage
+          secretName: placeimage
           
 
