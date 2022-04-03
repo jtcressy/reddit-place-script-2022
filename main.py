@@ -3,6 +3,8 @@
 import os
 import os.path
 import math
+import subprocess
+
 import requests
 import json
 import time
@@ -16,6 +18,9 @@ from PIL import Image, UnidentifiedImageError
 from loguru import logger
 import click
 from bs4 import BeautifulSoup
+
+from stem import Signal, InvalidArguments, SocketError, ProtocolError
+from stem.control import Controller
 
 
 from src.mappings import ColorMapper
@@ -46,7 +51,9 @@ class PlaceClient:
             if "proxies" in self.json_data and self.json_data["proxies"] is not None
             else None
         )
-        if self.proxies is None and os.path.exists(os.path.join(os.getcwd(), "proxies.txt")):
+        if self.proxies is None and os.path.exists(
+            os.path.join(os.getcwd(), "proxies.txt")
+        ):
             self.proxies = self.get_proxies_text()
         self.compactlogging = (
             self.json_data["compact_logging"]
@@ -54,6 +61,60 @@ class PlaceClient:
             and self.json_data["compact_logging"] is not None
             else True
         )
+        self.using_tor = (
+            self.json_data["using_tor"]
+            if "using_tor" in self.json_data and self.json_data["using_tor"] is not None
+            else False
+        )
+        self.tor_password = (
+            self.json_data["tor_password"]
+            if "tor_password" in self.json_data
+            and self.json_data["tor_password"] is not None
+            else "Passwort"  # this is intentional, as I don't really want to mess around with the torrc again
+        )
+        self.tor_delay = (
+            self.json_data["tor_delay"]
+            if "tor_delay" in self.json_data and self.json_data["tor_delay"] is not None
+            else 10
+        )
+        self.use_builtin_tor = (
+            self.json_data["use_builtin_tor"]
+            if "use_builtin_tor" in self.json_data
+            and self.json_data["use_builtin_tor"] is not None
+            else True
+        )
+        self.tor_port = (
+            self.json_data["tor_port"]
+            if "tor_port" in self.json_data and self.json_data["tor_port"] is not None
+            else 1881
+        )
+        self.tor_control_port = (
+            self.json_data["tor_control_port"]
+            if "tor_port" in self.json_data
+            and self.json_data["tor_control_port"] is not None
+            else 9051
+        )
+
+        # tor connection
+        if self.using_tor:
+            self.proxies = self.GetProxies(["127.0.0.1:" + str(self.tor_port)])
+            if self.use_builtin_tor:
+                subprocess.call(
+                    "start "
+                    + os.path.join(os.getcwd() + "/tor/Tor/tor.exe")
+                    + " --defaults-torrc "
+                    + os.path.join(os.getcwd() + "/Tor/Tor/torrc")
+                    + " --HTTPTunnelPort "
+                    + str(self.tor_port),
+                    shell=True,
+                )
+            try:
+                self.tor_controller = Controller.from_port(port=self.tor_control_port)
+                self.tor_controller.authenticate(self.tor_password)
+                logger.info("successfully connected to tor!")
+            except (ValueError, SocketError):
+                logger.error("connection to tor failed, disabling tor")
+                self.using_tor = False
 
         # Color palette
         self.rgb_colors_array = ColorMapper.generate_rgb_colors_array()
@@ -77,6 +138,18 @@ class PlaceClient:
 
         self.waiting_thread_index = -1
 
+    """ tor """
+
+    def tor_reconnect(self):
+        if self.using_tor:
+            try:
+                self.tor_controller.signal(Signal.NEWNYM)
+                logger.info("New Tor connection processing")
+                time.sleep(self.tor_delay)
+            except (InvalidArguments, ProtocolError):
+                logger.error("couldn't establish new tor connection, disabling tor")
+                self.using_tor = False
+
     """ Utils """
 
     def get_proxies_text(self):
@@ -88,6 +161,7 @@ class PlaceClient:
         self.proxies = []
         for i in proxieslist:
             self.proxies.append({"https": i, "http": i})
+
     def GetProxies(self, proxies):
         proxieslist = []
         for i in proxies:
@@ -95,10 +169,14 @@ class PlaceClient:
         return proxieslist
 
     def GetRandomProxy(self):
-        randomproxy = None
-        if self.proxies is not None:
-            randomproxy = self.proxies[random.randint(0, len(self.proxies) - 1)]
-        return randomproxy
+        if not self.using_tor:
+            randomproxy = None
+            if self.proxies is not None:
+                randomproxy = self.proxies[random.randint(0, len(self.proxies) - 1)]
+            return randomproxy
+        else:
+            self.tor_reconnect()
+            return self.proxies[0]
 
     def get_json_data(self, config_path):
         configFilePath = os.path.join(os.getcwd(), config_path)
@@ -321,7 +399,9 @@ class PlaceClient:
                                 Image.open(
                                     BytesIO(
                                         requests.get(
-                                            msg["data"]["name"], stream=True
+                                            msg["data"]["name"],
+                                            stream=True,
+                                            proxies=self.GetRandomProxy(),
                                         ).content
                                     )
                                 ),
@@ -337,18 +417,23 @@ class PlaceClient:
 
         ws.close()
 
-        # TODO: Multiply by canvas_details["canvasConfigurations"][i]["dx"] and canvas_details["canvasConfigurations"][i]["dy"] instead of hardcoding it
-        new_img_width = int(canvas_details["canvasWidth"]) * 2
+        new_img_width = (
+            max(map(lambda x: x["dx"], canvas_details["canvasConfigurations"]))
+            + canvas_details["canvasWidth"]
+        )
         logger.debug("New image width: {}", new_img_width)
-        new_img_height = int(canvas_details["canvasHeight"])
+        new_img_height = (
+            max(map(lambda x: x["dy"], canvas_details["canvasConfigurations"]))
+            + canvas_details["canvasHeight"]
+        )
         logger.debug("New image height: {}", new_img_height)
 
         new_img = Image.new("RGB", (new_img_width, new_img_height))
-        dx_offset = 0
         for idx, img in enumerate(sorted(imgs, key=lambda x: x[0])):
             logger.debug("Adding image (ID {}): {}", img[0], img[1])
             dx_offset = int(canvas_details["canvasConfigurations"][idx]["dx"])
-            new_img.paste(img[1], (dx_offset, 0))
+            dy_offset = int(canvas_details["canvasConfigurations"][idx]["dy"])
+            new_img.paste(img[1], (dx_offset, dy_offset))
 
         return new_img
 
@@ -408,11 +493,11 @@ class PlaceClient:
                     "{}, {}, {}, {}",
                     pix2[x + self.pixel_x_start, y + self.pixel_y_start],
                     new_rgb,
-                    new_rgb != (69, 42, 0),
+                    target_rgb[:3] != (69, 42, 0),
                     pix2[x, y] != new_rgb,
                 )
 
-                if new_rgb != (69, 42, 0):
+                if target_rgb[:3] != (69, 42, 0):
                     logger.debug(
                         "Thread #{} : Replacing {} pixel at: {},{} with {} color",
                         index,
@@ -423,7 +508,11 @@ class PlaceClient:
                     )
                     break
                 else:
-                    logger.info("TransparrentPixel")
+                    logger.info(
+                        "Transparent Pixel at {}, {} skipped",
+                        x + self.pixel_x_start,
+                        y + self.pixel_y_start,
+                    )
             x += 1
             loopedOnce = True
         return x, y, new_rgb
@@ -520,7 +609,7 @@ class PlaceClient:
                                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36"
                                 }
                             )
-                            r = client.get("https://new.reddit.com/login")
+                            r = client.get("https://www.reddit.com/login")
                             login_get_soup = BeautifulSoup(r.content, "html.parser")
                             csrf_token = login_get_soup.find(
                                 "input", {"name": "csrf_token"}
@@ -533,7 +622,7 @@ class PlaceClient:
                             }
 
                             r = client.post(
-                                "https://new.reddit.com/login",
+                                "https://www.reddit.com/login",
                                 data=data,
                                 proxies=self.GetRandomProxy(),
                             )
