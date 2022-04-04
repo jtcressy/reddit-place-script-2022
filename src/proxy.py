@@ -8,14 +8,14 @@ from stem.control import Controller
 
 def Init(self):
     self.proxies = (
-        self.GetProxies(self.json_data["proxies"])
+        get_proxies(self.json_data["proxies"])
         if "proxies" in self.json_data and self.json_data["proxies"] is not None
         else None
     )
     if self.proxies is None and os.path.exists(
         os.path.join(os.getcwd(), "proxies.txt")
     ):
-        self.proxies = self.get_proxies_text()
+        self.proxies = get_proxies_text()
     self.compactlogging = (
         self.json_data["compact_logging"]
         if "compact_logging" in self.json_data
@@ -55,10 +55,18 @@ def Init(self):
         and self.json_data["tor_control_port"] is not None
         else 9051
     )
+    self.tor_ip = (
+        self.json_data["tor_ip"]
+        if "tor_ip" in self.json_data
+        and self.json_data["tor_ip"] is not None
+        else "127.0.0.1"
+    )
+
+    print(self.tor_ip)
 
     # tor connection
     if self.using_tor:
-        self.proxies = get_proxies(self, ["127.0.0.1:" + str(self.tor_port)])
+        self.proxies = get_proxies(self, [self.tor_ip + ":" + str(self.tor_port)])
         if self.use_builtin_tor:
             subprocess.Popen(
                 '"'
@@ -112,7 +120,7 @@ def get_random_proxy(self):
             return random_proxy
         return random_proxy
     else:
-        tor_reconnect()
+        tor_reconnect(self)
         self.logger.debug("Using Tor. Selecting first proxy: {}.", str(self.proxies[0]))
         return self.proxies[0]
 
